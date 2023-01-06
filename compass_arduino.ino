@@ -3,12 +3,17 @@
   VCC       3V3       5V
   GND       GND       GND
   SCL       D5        A5
-  SDA       D6        A4
+  SDA       D6        A4 */
+
+/* FIXME:Make the initial offset values and manual offset anglue value in a function
+Save the offset and manual offset values in the EEPROM memory
+Check if the calibration_time is too long or just enough
+Change the LED for a buzzer, but it may need more current, maybe include a transistor (?)
 */
 
 // Libraries
 #include <Wire.h>
-#include <HMC5883L.h>
+#include <HMC5883L.h> //Two (2) new functions were included in the .h and .cpp files
 
 HMC5883L compass;
 
@@ -19,7 +24,7 @@ const int led_pin = 3; // The pin number of the LED
 const int calibration_time = 10000; //in milliseconds
 int button_state = LOW;
 
-/*Pinout for motors
+/* Pinout for motors
 Motor 1 is connected to digital pin 4*/
 const int motor_1_pin = 4; // N - motor_pins[0]
 const int motor_2_pin = 5; // E - motor_pins[1]
@@ -30,17 +35,17 @@ const int motor_pins[] = {motor_1_pin, motor_2_pin, motor_3_pin, motor_4_pin};
 /* Set declination angle for your location
 Visit: http://magnetic-declination.com/ or https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml#declination
 (+) Positive for E and (-) negative for W
-For Ottawa, ON declination angle is 12º 50'W (negative)
+For Ottawa, ON declination angle is 12° 50'W (negative)
 Formula: (+/-) (deg + (min/60) + (sec/3600)) * (PI/180); in radians*/
 const float declination_angle = -12.833; //in degrees
 float global_heading = 0;
 
 
 
-/*Compass initialization
+/* Compass initialization
 Initial offset values FIXME: from my last test
 Offset Values from tests
-    Xoff  Yoff  Diff º
+    Xoff  Yoff  Diff °
     -101, 66 = 30
     -82, 22 = 20
     -79, 36 = 20
@@ -59,8 +64,7 @@ Offset Values from tests
     -347, 79
     -318, 61
     -136, 115
-	-33, 79
-*/
+	-33, 79 */
 const int x_off_initial = -13;
 const int y_off_initial = 129;
 
@@ -80,7 +84,7 @@ void initialize_compass_in_setup()
     // Set number of samples averaged
     compass.setSamples(HMC5883L_SAMPLES_4);
 
-    // Set calibration offset in X and Y. See HMC5883L_calibration.ino by jarzebski
+    // Set initial calibration offset in X and Y. See HMC5883L_calibration.ino by jarzebski
     compass.setOffset(x_off_initial, y_off_initial);
 }
 
@@ -90,7 +94,7 @@ float read_heading_compass()
 {
     Vector norm = compass.readNormalize();
 
-    // Calculate heading in degrees (º)
+    // Calculate heading in degrees (°)
     float heading = (atan2f(norm.YAxis, norm.XAxis) * 180) / PI;
     
     /*Debugging
@@ -105,7 +109,7 @@ float read_heading_compass()
     //Correct the value of the heading
     heading = heading + declination_angle + manual_off_angle_heading;
 
-    // Correct for heading < 0º and heading > 360º
+    // Correct for heading < 0° and heading > 360°
     if (heading < 0)
     {
       heading += 360;
@@ -133,41 +137,37 @@ void calibrate_compass_setup()
     pinMode(led_pin, OUTPUT);
 }
 
+int x_off = x_off_initial; //Calibration offset values
+int y_off = y_off_initial;
 void calibrate_compass()
 {
-    // Turns off all the motors
+    /* The user needs to complete a full rotation (360°) of the compass
+    The minimum and maximum value in X and Y are calculated, and the offset is also calculated.
+    After the full rotation is completed, the new offset values are set outside of this function,
+    below in the "is_calibration_button_pushed()" function. */
+
+    Serial.println("Please complete ONLY one (1) full rotation (360°)");
+
+    // While the calibration is performed, all the motors are off
     for(int i=0; i<4; i++)
     {
         motor_n_deactivate(i);
     }
     
-    //TODO: Put calibration code FIXME: continuar desde aquí
-    /*Make int offX = 0;
-    int offY = 0; global the rest are local so the funciton is always calculating offset
-    and at the end, putside of the function you put
+    /*FIXME:What about this?
+    // Set data rate
+    compass.setDataRate(HMC5883L_DATARATE_30HZ);
+
+    // Set number of samples averaged
+    compass.setSamples(HMC5883L_SAMPLES_8);*/
     
-    // Set calibration offset in X and Y.
-    compass.setOffset(offX, offY);
-
-    But at the beginning, this function must put
-    compass.setOffset(0, 0);
-
-    FIXME:What about this? 
-     // Set data rate
-  compass.setDataRate(HMC5883L_DATARATE_30HZ);
-
-  // Set number of samples averaged
-  compass.setSamples(HMC5883L_SAMPLES_8);
-    */
     int minX = 0;
     int maxX = 0;
     int minY = 0;
     int maxY = 0;
+    compass.setOffset(0, 0); //reset offset
 
-    int offX; //global FIXME:
-    int offY;
-
-    Vector mag = compass.readRaw();
+    Vector mag = compass.readRaw(); //reads raw values from the sensor
 
     // Determine Min / Max values
     if (mag.XAxis < minX) minX = mag.XAxis;
@@ -175,9 +175,10 @@ void calibrate_compass()
     if (mag.YAxis < minY) minY = mag.YAxis;
     if (mag.YAxis > maxY) maxY = mag.YAxis;
 
-    // Calculate offsets
-    offX = (maxX + minX)/2;
-    offY = (maxY + minY)/2;
+    /* Calculate offsets
+    the new values are set below in the "is_calibration_button_pushed()" function*/
+    x_off = (maxX + minX)/2;
+    y_off = (maxY + minY)/2;
 
     /* Debugging
     Serial.print(mag.XAxis);
@@ -191,11 +192,16 @@ void calibrate_compass()
     Serial.print(minY);
     Serial.print(":");
     Serial.print(maxY);
-    Serial.print(":");*/
-
-    // Serial.print(offX);
+    Serial.print(":");
+    
+    //To check whether the offset values change when the button is released before completing the calibration add the next code in "void loop()"
+    Serial.print("Main: ");
+    Serial.print(compass.getOffsetValue_X());
+    Serial.print(":");
+    Serial.println(compass.getOffsetValue_Y());*/
+    // Serial.print(x_off);
     // Serial.print(":");
-    // Serial.println(offY);
+    // Serial.println(y_off);
 }
 
 void is_calibration_button_pushed()
@@ -213,15 +219,26 @@ void is_calibration_button_pushed()
     if (button_state == HIGH)
     {
         long startTime = millis(); // get the current time in milliseconds
+
+        //get the current offset values. If the button is released, the values return to their previous values and do not change 
+        int temp_x_off = x_off;
+        int temp_y_off = y_off;
+
         while (millis() - startTime < calibration_time) // run the loop for 10 seconds (10 000 milliseconds)
         {
             if (digitalRead(button_pin) == LOW) // check if the button has been released
             {
+                // keep the previous offset values
+                x_off = temp_x_off;
+                y_off = temp_y_off;
                 break; // exit the loop
             }
             digitalWrite(led_pin, HIGH); //The LED indicates that the calibration is being performed
-            // calibrate_compass(); //TODO: Include the calibration code
+            calibrate_compass(); //TODO: Check if the fixme is needed or not inside there
         }
+
+        // Set the new calibration offset in X and Y to the sensor
+        compass.setOffset(x_off, y_off);
 
         button_state = digitalRead(button_pin);
         if (button_state == HIGH)// if the button is still being pressed, the calibration was completed
@@ -233,9 +250,11 @@ void is_calibration_button_pushed()
                 digitalWrite(led_pin, HIGH);
                 delay(250); 
             }
+            Serial.println("Calibration completed!");
         }
     }
 }
+
 
 
 //Motors
@@ -256,13 +275,12 @@ void motor_n_activate(int motor_number)
     }
     else
     {
-        // Turn on motor for 2 seconds FIXME: change the time on
+        // Turn on motor
         digitalWrite(motor_pins[motor_number], HIGH);
         /* Debugging
         Serial.print("MOTOR ");
         Serial.print(motor_number);
         Serial.println(" ON");*/
-        // delay(2000);
     }
 }
 
